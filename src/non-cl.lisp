@@ -52,12 +52,18 @@
   `(ps-js:object
     ,@(loop for (key val-expr) on arrows by #'cddr collecting
            (progn
-             (assert (or (stringp key) (numberp key) (symbolp key))
-                     ()
-                     "Slot key ~s is not one of symbol, string or number."
-                     key)
-             (cons (aif (and (symbolp key) (reserved-symbol? key)) it key)
-                   (compile-expression val-expr))))))
+               (assert (or (stringp key) (numberp key) (symbolp key) (eq 'quote (car key)))
+                       ()
+                       "Slot key ~s is not one of symbol, string or number."
+                       key)
+               (cons (acond
+                       ((and (symbolp key) (reserved-symbol? key))
+                        it)
+                       ((and (consp key) (eq 'quote (car key)))
+                        (symbol-to-js-string (eval key)))
+                       (t
+                        key))
+                     (compile-expression val-expr))))))
 
 (define-expression-operator %js-getprop (obj slot)
   (let ((expanded-slot (ps-macroexpand slot))
