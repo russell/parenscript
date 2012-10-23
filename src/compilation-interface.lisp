@@ -78,9 +78,13 @@ if by ps*. If *parenscript-stream* is bound, writes the output to
           (*readtable* *readtable*)
           (*package* *package*)
           (*parenscript-stream* output-stream)
-          (eof '#:eof))
-      (loop for form = (funcall *ps-read-function* stream nil eof)
-            until (eq form eof) do (ps* form) (fresh-line *parenscript-stream*)))
+          (eof '#:eof)
+          (*ps-source-current-form* 'foo))
+      (loop
+         for form = (funcall *ps-read-function* stream nil eof)
+         for *ps-source-current-form* = form
+         until (eq form eof)
+         do (ps* form) (fresh-line *parenscript-stream*)))
     (unless *parenscript-stream*
       (get-output-stream-string output-stream))))
 
@@ -90,4 +94,6 @@ if by ps*. If *parenscript-stream* is bound, writes the output to
                           :direction :input
                           :element-type element-type
                           :external-format external-format)
-    (ps-compile-stream stream)))
+    (let ((*ps-source-file* source-file)
+          (*ps-source-position* 1))
+      (ps-compile-stream stream))))

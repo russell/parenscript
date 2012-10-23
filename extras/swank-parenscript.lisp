@@ -1,18 +1,23 @@
 (in-package :parenscript)
 
 (defun parenscript-function-p (symbol)
-  (and (or (gethash symbol *ps-macro-toplevel* )
-           (gethash symbol *ps-function-toplevel-cache*))
+  (and (some (lambda (h)
+               (nth-value 1 (gethash symbol h)))
+             (list *macro-toplevel-lambda-list*
+                   *function-lambda-list*
+                   *special-operator-lambda-list*))
        t))
 #++
 (pushnew 'parenscript-function-p swank::*external-valid-function-name-p-hooks*)
 
 (defun parenscript-arglist (fname)
-  (acond
-    ((gethash fname *ps-macro-toplevel-lambda-list*)
-     (values it t))
-    ((gethash fname *ps-function-toplevel-cache*)
-     (values it t))))
+  (loop for hash in (list *macro-toplevel-lambda-list*
+                          *function-lambda-list*
+                          *special-operator-lambda-list*)
+     do (multiple-value-bind (ll found)
+            (gethash fname hash)
+          (when found
+            (return (values ll found))))))
 #++
 (pushnew 'parenscript-arglist swank::*external-arglist-hooks*)
 

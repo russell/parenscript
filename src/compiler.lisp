@@ -41,10 +41,12 @@
 ;; need to split special op definition into two parts - statement and expression
 (defmacro %define-special-operator (type name lambda-list &body body)
   (defined-operator-override-check name
-      `(setf (gethash ',name ,type)
-             (lambda (&rest whole)
-               (destructuring-bind ,lambda-list whole
-                 ,@body)))))
+      `(progn
+         (setf (gethash ',name *special-operator-lambda-list*) ',lambda-list)
+         (setf (gethash ',name ,type)
+              (lambda (&rest whole)
+                (destructuring-bind ,lambda-list whole
+                  ,@body))))))
 
 (defmacro define-expression-operator (name lambda-list &body body)
   `(%define-special-operator *special-expression-operators*
@@ -129,6 +131,19 @@ block.")
 (defvar *function-lambda-list* (make-hash-table)
   "Table of lambda lists for defined functions.")
 
+(defvar *special-operator-lambda-list* (make-hash-table)
+  "Table of lambda lists for special operators.")
+
+;;; source locations
+
+(defvar *function-location-toplevel-cache* (make-hash-table)
+  "Table of function to source locations.")
+(defparameter *ps-source-file* nil)
+(defparameter *ps-source-position* nil)
+(defparameter *ps-source-buffer* nil)
+(defparameter *ps-source-current-form* nil)
+(defparameter *ps-source-definer-name* nil)
+
 ;;; macros
 (defun make-macro-dictionary ()
   (make-hash-table :test 'eq))
@@ -167,6 +182,67 @@ lambda list from a Parenscript perspective."
           ,@body))
      effective-lambda-list)))
 
+(defun make-source-location (definer name lambda-list body &optional sl)
+  (flet ((msl (file buffer position &optional snippet)
+           (let ((snippet (or snippet
+                              #++(format nil "(~s ~s ~s ~{~s~}" definer name lambda-list body))))
+             `(                  ;,(format nil "(~s ~s)" definer name)
+               ,@(if buffer
+                     `((:buffer ,buffer))
+                     `((:file ,(if (pathnamep file)
+                                   (namestring file)
+                                   file))
+                       (:modified ,(file-write-date file))))
+                 ,(or (assoc :position position)
+                      (assoc :offset position)
+                      (assoc :line position)
+                      (assoc :form-path position))
+                 (:snippet ,(or (and *ps-source-current-form*
+                                     (let ((s (princ-to-string
+                                               *ps-source-current-form*)))
+                                       (subseq s 0 (min 256 (length s)))))
+                                (subseq snippet 0 (min 256 (length snippet)))))))))
+
+    (cond
+      ((and *ps-source-position* (or *ps-source-file* *ps-source-buffer*))
+       #++(format t "~&~%psp&psf|psb ~s / ~s~% @ ~s~%" *ps-source-file* *ps-source-buffer*  *ps-source-position*)
+       (msl *ps-source-file* *ps-source-buffer*
+            (if (consp *ps-source-position*)
+                *ps-source-position*
+                `((:position ,*ps-source-position*)))))
+      #+sbcl
+      ((and sl
+            (let* ((buffer (getf (sb-c:definition-source-location-plist sl)
+                                 :emacs-buffer))
+                   ;; use in prder of decreasing preference:
+                   ;; :emacs-buffer
+                   ;;   (use buffer first, since C-c C-c is probably
+                   ;;    on stuff that hasn't been saved yet, file may
+                   ;;    not even exist yet)
+                   ;; :emacs-filename from source-location-plist
+                   ;; source-location-namestring (which gets stuff like
+                   ;; "/tmp/fileRBYgJc" from C-c C-c in *slime-scratch*)
+                   (file (or (getf (sb-c:definition-source-location-plist sl)
+                                   :emacs-filename)
+                             (sb-c:definition-source-location-namestring
+                                 sl)))
+                   (position `((,@(if (sb-c:definition-source-location-plist
+                                          sl)
+                                      `(,@(if buffer '(:offset 0) '(:position))
+                                          ,(or (getf (sb-c:definition-source-location-plist
+                                                         sl)
+                                                     :emacs-position)
+                                               (list 1)))
+                                      (list :form-path
+                                            (list (sb-c:definition-source-location-toplevel-form-number
+                                                      sl)))))))
+                   (snippet (getf (sb-c:definition-source-location-plist sl)
+                                  :emacs-string)))
+              (when (or buffer file)
+                (msl file buffer position snippet)))))
+      (t #++(format t "~&no source location available?")))))
+
+
 (defmacro defpsmacro (name args &body body)
   (defined-operator-override-check name
       (multiple-value-bind (macro-fn-form effective-lambda-list)
@@ -174,6 +250,11 @@ lambda list from a Parenscript perspective."
         `(progn
            (setf (gethash ',name *macro-toplevel*) ,macro-fn-form)
            (setf (gethash ',name *macro-toplevel-lambda-list*) ',effective-lambda-list)
+           (setf (gethash ',name *function-location-toplevel-cache*)
+                 (list (make-source-location ',(or *ps-source-definer-name*
+                                                   'defpsmacro)
+                                             ',name ',args ',body
+                                             #+sbcl (sb-c:source-location))))
            ',name))))
 
 (defmacro define-ps-symbol-macro (symbol expansion)

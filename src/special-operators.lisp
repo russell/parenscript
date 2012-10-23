@@ -376,7 +376,8 @@ Parenscript now implements implicit return, update your code! Things like (lambd
         (ps-compile `(progn ,@body))))))
 
 (define-expression-operator defmacro (name args &body body)
-  (eval `(defpsmacro ,name ,args ,@body))
+  (let ((*ps-source-definer-name* 'defmacro))
+    (eval `(defpsmacro ,name ,args ,@body)))
   nil)
 
 (define-expression-operator define-symbol-macro (name expansion)
